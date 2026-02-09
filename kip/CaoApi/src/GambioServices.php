@@ -915,26 +915,63 @@ private function fetchCategoriesPageV3(int $page = 1, int $perPage = 200): array
 
     public function upsertProductFromCaoXml(\SimpleXMLElement $xml): void
     {
-        // TODO: Implementieren (für Bestellabruf nicht erforderlich)
-        if (function_exists('cao_api_log')) {
-            cao_api_log('upsertProductFromCaoXml called (not implemented yet)', $GLOBALS['config']['logFile'] ?? null);
+        $product = $this->parseCaoProductXml($xml);
+        $productId = $product['id'] ?? null;
+        if (!$productId && !empty($product['model'])) {
+            $productId = $this->findProductIdByModel((string)$product['model']);
+        }
+
+        $payload = $this->buildProductPayload($product);
+        if (!$payload) {
+            throw new \InvalidArgumentException('Product payload is empty.');
+        }
+
+        if ($productId) {
+            $this->api->patch('products/' . (int)$productId, $payload);
+        } else {
+            $res = $this->api->post('products', $payload);
+            if (isset($res['data']['id'])) {
+                $productId = (int)$res['data']['id'];
+            } elseif (isset($res['id'])) {
+                $productId = (int)$res['id'];
+            }
+        }
+
+        if ($productId) {
+            if (array_key_exists('quantity', $product)) {
+                $this->updateStockById($productId, (int)$product['quantity']);
+            }
+            if (array_key_exists('price', $product)) {
+                $taxClassId = $product['taxClassId'] ?? null;
+                $this->updatePriceById($productId, (float)$product['price'], $taxClassId !== null ? (int)$taxClassId : null);
+            }
         }
     }
 
     public function updateStock(string $sku, int $qty): void
     {
-        // TODO: Optional implementieren
-        if (function_exists('cao_api_log')) {
-            cao_api_log("updateStock sku={$sku} qty={$qty} (noop)", $GLOBALS['config']['logFile'] ?? null);
+        $sku = trim($sku);
+        if ($sku === '') {
+            throw new \InvalidArgumentException('Missing SKU for stock update.');
         }
+        $productId = $this->findProductIdByModel($sku);
+        if (!$productId) {
+            throw new \RuntimeException("Product not found for SKU {$sku}.");
+        }
+        $this->updateStockById($productId, $qty);
     }
 
     public function updatePrice(string $sku, float $price): void
     {
-        // TODO: Optional implementieren
-        if (function_exists('cao_api_log')) {
-            cao_api_log("updatePrice sku={$sku} price={$price} (noop)", $GLOBALS['config']['logFile'] ?? null);
+        $sku = trim($sku);
+        if ($sku === '') {
+            throw new \InvalidArgumentException('Missing SKU for price update.');
         }
+        $productId = $this->findProductIdByModel($sku);
+        if (!$productId) {
+            throw new \RuntimeException("Product not found for SKU {$sku}.");
+        }
+        $this->updatePriceById($productId, $price, null);
     }
 
     /* =======================
@@ -960,6 +997,185 @@ private function fetchCategoriesPageV3(int $page = 1, int $perPage = 200): array
     {
         $flags = defined('ENT_HTML5') ? (ENT_QUOTES | ENT_HTML5) : ENT_QUOTES;
         return strip_tags(html_entity_decode($s, $flags, 'UTF-8'));
+    }
+
+    private function parseCaoProductXml(\SimpleXMLElement $xml): array
+    {
+        $nodes = $xml->xpath('//PRODUCT_DATA');
+        $node = $nodes && isset($nodes[0]) ? $nodes[0] : $xml;
+        if (!$node instanceof \SimpleXMLElement) {
+            throw new \InvalidArgumentException('Invalid product XML payload.');
+        }
+
+        $product = [
+            'id'           => $this->intFromXml($node, 'PRODUCT_ID'),
+            'model'        => $this->stringFromXml($node, 'PRODUCT_MODEL'),
+            'quantity'     => $this->intFromXml($node, 'PRODUCT_QUANTITY'),
+            'price'        => $this->floatFromXml($node, 'PRODUCT_PRICE'),
+            'taxClassId'   => $this->intFromXml($node, 'PRODUCT_TAX_CLASS_ID'),
+            'weight'       => $this->floatFromXml($node, 'PRODUCT_WEIGHT'),
+            'isActive'     => $this->boolFromXml($node, 'PRODUCT_STATUS'),
+            'ean'          => $this->stringFromXml($node, 'PRODUCT_EAN'),
+            'manufacturer' => $this->intFromXml($node, 'MANUFACTURERS_ID'),
+        ];
+
+        $descNodes = $node->xpath('PRODUCT_DESCRIPTION');
+        if ($descNodes && isset($descNodes[0]) && $descNodes[0] instanceof \SimpleXMLElement) {
+            $desc = $descNodes[0];
+            $code = (string)($desc['CODE'] ?? 'de');
+            $code = $code !== '' ? $code : 'de';
+            $product['lang'] = $code;
+            $product['name'] = $this->stringFromXml($desc, 'NAME');
+            $product['description'] = $this->stringFromXml($desc, 'DESCRIPTION');
+            $product['shortDescription'] = $this->stringFromXml($desc, 'SHORT_DESCRIPTION');
+            $product['metaTitle'] = $this->stringFromXml($desc, 'META_TITLE');
+            $product['metaDescription'] = $this->stringFromXml($desc, 'META_DESCRIPTION');
+            $product['metaKeywords'] = $this->stringFromXml($desc, 'META_KEYWORDS');
+            $product['url'] = $this->stringFromXml($desc, 'URL');
+        }
+
+        return array_filter($product, static function ($value) {
+            return $value !== null && $value !== '';
+        });
+    }
+
+    private function buildProductPayload(array $product): array
+    {
+        $payload = [];
+        $lang = $product['lang'] ?? null;
+
+        if (!empty($product['model'])) {
+            $payload['model'] = (string)$product['model'];
+        }
+        if (isset($product['ean'])) {
+            $payload['ean'] = (string)$product['ean'];
+        }
+        if (isset($product['weight'])) {
+            $payload['weight'] = (float)$product['weight'];
+        }
+        if (isset($product['isActive'])) {
+            $payload['isActive'] = $product['isActive'] ? 1 : 0;
+        }
+        if (!empty($product['manufacturer'])) {
+            $payload['manufacturerId'] = (int)$product['manufacturer'];
+        }
+        if (!empty($product['taxClassId'])) {
+            $payload['taxClassId'] = (int)$product['taxClassId'];
+        }
+
+        $textFields = [
+            'name' => 'name',
+            'description' => 'description',
+            'shortDescription' => 'shortDescription',
+            'metaTitle' => 'metaTitle',
+            'metaDescription' => 'metaDescription',
+            'metaKeywords' => 'metaKeywords',
+            'url' => 'url',
+        ];
+
+        foreach ($textFields as $key => $field) {
+            if (!empty($product[$key])) {
+                $payload[$field] = $lang ? [$lang => (string)$product[$key]] : (string)$product[$key];
+            }
+        }
+
+        if (isset($product['price'])) {
+            $payload['price'] = (float)$product['price'];
+        }
+
+        return $payload;
+    }
+
+    private function findProductIdByModel(string $model): ?int
+    {
+        $model = trim($model);
+        if ($model === '') {
+            return null;
+        }
+
+        if ($this->api->getApiVersion() === 'v3') {
+            try {
+                $res = $this->api->get('products', [
+                    'filter[model]' => $model,
+                    'per-page' => 1,
+                    'page' => 1,
+                ]);
+                $list = $this->extractList($res, ['data', 'products']);
+                if ($list) {
+                    $item = $list[0];
+                    return (int)($item['id'] ?? $item['products_id'] ?? 0) ?: null;
+                }
+            } catch (\Throwable $e) {
+            }
+        }
+
+        try {
+            $res = $this->api->post('products/search', [
+                'search' => [
+                    'match' => ['products_model' => $model],
+                ],
+            ]);
+            $list = $this->extractList($res, ['data', 'products']);
+            if ($list) {
+                $item = $list[0];
+                return (int)($item['id'] ?? $item['products_id'] ?? 0) ?: null;
+            }
+        } catch (\Throwable $e) {
+        }
+
+        return null;
+    }
+
+    private function updateStockById(int $productId, int $qty): void
+    {
+        $this->api->patch('products/' . $productId . '/stock', [
+            'quantity' => $qty,
+        ]);
+    }
+
+    private function updatePriceById(int $productId, float $price, ?int $taxClassId): void
+    {
+        $payload = ['price' => $price];
+        if ($taxClassId !== null) {
+            $payload['taxClassId'] = $taxClassId;
+        }
+        $this->api->patch('products/' . $productId . '/prices', $payload);
+    }
+
+    private function stringFromXml(\SimpleXMLElement $node, string $name): ?string
+    {
+        if (!isset($node->{$name})) {
+            return null;
+        }
+        $value = trim((string)$node->{$name});
+        return $value !== '' ? $value : null;
+    }
+
+    private function intFromXml(\SimpleXMLElement $node, string $name): ?int
+    {
+        $value = $this->stringFromXml($node, $name);
+        if ($value === null) {
+            return null;
+        }
+        return (int)$value;
+    }
+
+    private function floatFromXml(\SimpleXMLElement $node, string $name): ?float
+    {
+        $value = $this->stringFromXml($node, $name);
+        if ($value === null) {
+            return null;
+        }
+        return (float)str_replace(',', '.', $value);
+    }
+
+    private function boolFromXml(\SimpleXMLElement $node, string $name): ?bool
+    {
+        $value = $this->stringFromXml($node, $name);
+        if ($value === null) {
+            return null;
+        }
+        return (int)$value === 1;
     }
 	
 	private function extractList(array $res, array $candidates = ['data','manufacturers']): array
