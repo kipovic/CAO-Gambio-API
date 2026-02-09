@@ -55,7 +55,7 @@ if (isset($_GET['action'])) {
 			case 'orders_export':
 			{
 				try {
-					if (defined('SET_TIME_LIMIT')) { @set_time_limit(0); }
+					if (function_exists('set_time_limit')) { @set_time_limit(0); }
 					$from   = isset($_GET['order_from'])   ? (int)$_GET['order_from']   : 1;
 					$to     = isset($_GET['order_to'])     ? (int)$_GET['order_to']     : 999999;
 					$status = isset($_GET['order_status']) ? (string)$_GET['order_status'] : '';
@@ -91,7 +91,7 @@ if (isset($_GET['action'])) {
 			case 'manufacturers_export':
 			{
 				try {
-					if (defined('SET_TIME_LIMIT')) { @set_time_limit(0); }
+					if (function_exists('set_time_limit')) { @set_time_limit(0); }
 
 					$page    = isset($_GET['page'])     ? max(1,(int)$_GET['page'])     : 1;
 					$perPage = isset($_GET['per_page']) ? max(1,(int)$_GET['per_page']) : 200;
@@ -132,7 +132,7 @@ if (isset($_GET['action'])) {
 			case 'products_export':
 			{
 				try {
-					if (defined('SET_TIME_LIMIT')) { @set_time_limit(0); }
+					if (function_exists('set_time_limit')) { @set_time_limit(0); }
 
 					$page    = isset($_GET['page'])     ? max(1,(int)$_GET['page'])     : 1;
 					$perPage = isset($_GET['per_page']) ? max(1,(int)$_GET['per_page']) : 50; // v2 deckelt oft auf 50
@@ -171,7 +171,7 @@ if (isset($_GET['action'])) {
 			case 'customers_export':
 			{
 				try {
-					if (defined('SET_TIME_LIMIT')) { @set_time_limit(0); }
+					if (function_exists('set_time_limit')) { @set_time_limit(0); }
 
 					$page    = isset($_GET['page'])     ? max(1,(int)$_GET['page'])     : 1;
 					$perPage = isset($_GET['per_page']) ? max(1,min(100,(int)$_GET['per_page'])) : 100; // v3 erlaubt meist bis 100
@@ -210,7 +210,7 @@ if (isset($_GET['action'])) {
 			case 'categories_export':
 			{
 				try {
-					if (defined('SET_TIME_LIMIT')) { @set_time_limit(0); }
+					if (function_exists('set_time_limit')) { @set_time_limit(0); }
 
 					$perPage  = isset($_GET['per_page'])   ? max(1,min(200,(int)$_GET['per_page'])) : 200;
 					$pageFrom = isset($_GET['page_start']) ? max(1,(int)$_GET['page_start'])        : 1;
