@@ -14,4 +14,15 @@ return [
 
     // Logging
     'logFile'    => __DIR__ . '/../../logs/cao_api.log',
+
+    // Optional: Zugriffsschutz für dieses CAO-Entry-Point
+    // Wenn gesetzt, muss der Client den Token in Headern "X-CAO-Token" oder "X-Api-Key"
+    // oder als Query-Parameter "token" mitsenden.
+    'accessToken' => getenv('CAO_API_TOKEN') ?: null,
+
+    // Optional: IP-Whitelist (z. B. ['203.0.113.10','203.0.113.11'])
+    'allowedIps' => [],
+
+    // Optional: Max. XML-Uploadgröße in Bytes (Default 2 MiB)
+    'maxXmlBytes' => 2 * 1024 * 1024,
 ];

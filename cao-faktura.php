@@ -17,6 +17,8 @@ declare(strict_types=1);
 $config = require __DIR__ . '/../GXModules/kip/CaoApi/bootstrap.php';
 $GLOBALS['config'] = $config; // optional für Logging in Services
 
+enforceAccessPolicy($config);
+
 // 2) Klassen laden (ggf. Autoloader verwenden)
 require_once __DIR__ . '/../GXModules/kip/CaoApi/src/GambioApiClient.php';
 require_once __DIR__ . '/../GXModules/kip/CaoApi/src/GambioServices.php';
@@ -24,7 +26,8 @@ require_once __DIR__ . '/../GXModules/kip/CaoApi/src/CaoStatusMapper.php';
 require_once __DIR__ . '/../GXModules/kip/CaoApi/src/CaoXmlMapper.php';
 
 // 3) API-Version ggf. über Request übersteuern (?api=v2|v3)
-$apiVersion = isset($_REQUEST['api']) ? $_REQUEST['api'] : ($config['apiVersion'] ?? 'v2');
+$requestedApi = isset($_REQUEST['api']) ? (string)$_REQUEST['api'] : (string)($config['apiVersion'] ?? 'v2');
+$apiVersion   = in_array($requestedApi, ['v2', 'v3'], true) ? $requestedApi : 'v2';
 
 // 4) Client & Service
 $client = (new GambioApiClient($config))->withVersion($apiVersion);
@@ -95,7 +98,7 @@ if (isset($_GET['action'])) {
 
 					$all = [];
 					do {
-						$res   = $svc->getManufacturersV2($page, $perPage); // liefert ['data'=>[…]]
+					$res   = $svc->getManufacturers($page, $perPage); // liefert ['data'=>[…]]
 						$chunk = $res['data'] ?? [];
 						$all   = array_merge($all, $chunk);
 						$hasMore = count($chunk) === $perPage;
@@ -137,7 +140,7 @@ if (isset($_GET['action'])) {
 					$root = CaoProductXmlMapperClassic::createRoot();
 
 					do {
-						$res   = $svc->fetchProductsPageV2($page, $perPage);  // deine Service-Methode
+						$res   = $svc->fetchProductsPage($page, $perPage);  // deine Service-Methode
 						$chunk = $res['data'] ?? [];
 						foreach ($chunk as $p) {
 							$node = CaoProductXmlMapperClassic::productToCaoClassic(['data' => $p], 'de','Deutsch','2');
@@ -217,7 +220,7 @@ if (isset($_GET['action'])) {
 
 					$page = $pageFrom;
 					do {
-						$res     = $svc->fetchCategoriesPageV2($page, $perPage);
+						$res     = $svc->fetchCategoriesPage($page, $perPage);
 						$parents = $res['data'] ?? [];
 						$count   = count($parents);
 
@@ -344,7 +347,7 @@ try {
 
         case 'upsert_product':
             if (!$xmlInput) throw new InvalidArgumentException('Missing product XML');
-            $productXml = new SimpleXMLElement($xmlInput);
+            $productXml = parseXmlInput($xmlInput, $config);
             $svc->upsertProductFromCaoXml($productXml);
             $out = new SimpleXMLElement('<RESULT/>');
             $out->addChild('STATUS', 'OK');
@@ -385,4 +388,61 @@ function appendSimpleXml(SimpleXMLElement $to, SimpleXMLElement $from): void {
     $toDom   = dom_import_simplexml($to);
     $fromDom = dom_import_simplexml($from);
     $toDom->appendChild($toDom->ownerDocument->importNode($fromDom, true));
+}
+
+function enforceAccessPolicy(array $config): void
+{
+    $allowedIps = $config['allowedIps'] ?? [];
+    if (is_array($allowedIps) && $allowedIps) {
+        $remoteIp = $_SERVER['REMOTE_ADDR'] ?? '';
+        if (!in_array($remoteIp, $allowedIps, true)) {
+            http_response_code(403);
+            header('Content-Type: text/xml; charset=utf-8');
+            echo '<ERROR>Forbidden</ERROR>';
+            exit;
+        }
+    }
+
+    $token = $config['accessToken'] ?? null;
+    if ($token) {
+        $headerToken = '';
+        if (function_exists('getallheaders')) {
+            $headers = getallheaders();
+            $headerToken = $headers['X-CAO-Token'] ?? $headers['X-Api-Key'] ?? '';
+        }
+        $queryToken = $_GET['token'] ?? $_POST['token'] ?? $_REQUEST['token'] ?? '';
+        $provided   = $headerToken !== '' ? $headerToken : $queryToken;
+        if (!hash_equals((string)$token, (string)$provided)) {
+            http_response_code(401);
+            header('Content-Type: text/xml; charset=utf-8');
+            echo '<ERROR>Unauthorized</ERROR>';
+            exit;
+        }
+    }
+}
+
+function parseXmlInput(string $xmlInput, array $config): SimpleXMLElement
+{
+    $maxBytes = (int)($config['maxXmlBytes'] ?? (2 * 1024 * 1024));
+    if ($maxBytes > 0 && strlen($xmlInput) > $maxBytes) {
+        throw new InvalidArgumentException('XML payload too large.');
+    }
+
+    $prev = null;
+    if (function_exists('libxml_disable_entity_loader')) {
+        $prev = libxml_disable_entity_loader(true);
+    }
+    libxml_use_internal_errors(true);
+    $options = LIBXML_NONET | LIBXML_NOCDATA;
+    $xml = simplexml_load_string($xmlInput, 'SimpleXMLElement', $options);
+    if ($prev !== null && function_exists('libxml_disable_entity_loader')) {
+        libxml_disable_entity_loader($prev);
+    }
+    if ($xml === false) {
+        $errors = libxml_get_errors();
+        libxml_clear_errors();
+        $message = $errors ? trim($errors[0]->message) : 'Invalid XML';
+        throw new InvalidArgumentException($message);
+    }
+    return $xml;
 }
