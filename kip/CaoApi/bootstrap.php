@@ -5,9 +5,19 @@ declare(strict_types=1);
 // error_reporting(E_ALL); ini_set('display_errors', '1');
 
 $baseDir = __DIR__;
-$config  = require __DIR__ . '/config/config.php';
+$configFile = __DIR__ . '/config/config.php';
+if (!is_file($configFile)) {
+    $configFile = __DIR__ . '/config/config.sample.php';
+}
+if (!is_file($configFile)) {
+    throw new RuntimeException('Missing config file. Provide config/config.php.');
+}
+$config = require $configFile;
 
-require_once __DIR__ . '/src/CaoXmlHelpers.php';
+$helpersFile = __DIR__ . '/src/CaoXmlHelpers.php';
+if (is_file($helpersFile)) {
+    require_once $helpersFile;
+}
 
 // Mini-Autoloader
 spl_autoload_register(function ($class) use ($baseDir) {

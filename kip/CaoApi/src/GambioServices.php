@@ -469,7 +469,26 @@ public function fetchAllProductsV2(int $limit = 200): array
 		return $rows;
 	}
 
-	public function fetchProductsPageV2(int $page = 1, int $perPage = 200): array
+	public function fetchProductsPage(int $page = 1, int $perPage = 200): array
+	{
+		if ($this->api->getApiVersion() === 'v3') {
+			try {
+				return $this->fetchProductsPageV3($page, $perPage);
+			} catch (\Throwable $e) {
+				if (strpos($e->getMessage(), 'HTTP 404') !== false) {
+					if (function_exists('cao_api_log')) {
+						cao_api_log('v3 products endpoint missing, falling back to v2', $GLOBALS['config']['logFile'] ?? null);
+					}
+					return $this->fetchProductsPageV2($page, $perPage);
+				}
+				throw $e;
+			}
+		}
+
+		return $this->fetchProductsPageV2($page, $perPage);
+	}
+
+	private function fetchProductsPageV2(int $page = 1, int $perPage = 200): array
 	{
 		// Gambio deckelt i. d. R. auf 200
 		if ($perPage > 200) { $perPage = 200; }
@@ -495,6 +514,33 @@ public function fetchAllProductsV2(int $limit = 200): array
 		}
 
 		// Optional: bereits hier Hersteller/Steuer anreichern (pro Seite)
+		$list = $this->enrichProductsV2($list);
+
+		return ['data' => $list];
+	}
+
+	private function fetchProductsPageV3(int $page = 1, int $perPage = 200): array
+	{
+		if ($perPage > 200) { $perPage = 200; }
+		if ($perPage < 1)   { $perPage = 50; }
+
+		$res = $this->api->get('products', [
+			'page'     => $page,
+			'per-page' => $perPage,
+			'limit'    => $perPage,
+			'offset'   => ($page - 1) * $perPage,
+			'sort'     => 'id',
+		]);
+
+		$list = [];
+		if (is_array($res)) {
+			if (isset($res['data']) && is_array($res['data'])) {
+				$list = $res['data'];
+			} elseif (array_values($res) === $res) {
+				$list = $res;
+			}
+		}
+
 		$list = $this->enrichProductsV2($list);
 
 		return ['data' => $list];
@@ -597,7 +643,26 @@ public function fetchCustomersPageV3(int $page = 1, int $perPage = 50): array
  * Holt EINE Seite Kategorien (v2 GET /categories) und normalisiert Felder.
  * Rückgabe: ['data' => [ ... ]]
  */
-public function fetchCategoriesPageV2(int $page = 1, int $perPage = 200): array
+public function fetchCategoriesPage(int $page = 1, int $perPage = 200): array
+{
+    if ($this->api->getApiVersion() === 'v3') {
+        try {
+            return $this->fetchCategoriesPageV3($page, $perPage);
+        } catch (\Throwable $e) {
+            if (strpos($e->getMessage(), 'HTTP 404') !== false) {
+                if (function_exists('cao_api_log')) {
+                    cao_api_log('v3 categories endpoint missing, falling back to v2', $GLOBALS['config']['logFile'] ?? null);
+                }
+                return $this->fetchCategoriesPageV2($page, $perPage);
+            }
+            throw $e;
+        }
+    }
+
+    return $this->fetchCategoriesPageV2($page, $perPage);
+}
+
+private function fetchCategoriesPageV2(int $page = 1, int $perPage = 200): array
 {
     if ($perPage > 200) { $perPage = 200; }
     if ($perPage < 1)   { $perPage = 50; }
@@ -622,47 +687,42 @@ public function fetchCategoriesPageV2(int $page = 1, int $perPage = 200): array
     $norm = [];
     foreach ($list as $c) {
         if (!is_array($c)) continue;
-
-        $id         = $c['id'] ?? $c['categories_id'] ?? null;
-        $parentId   = $c['parentId'] ?? $c['parent_id'] ?? 0;
-        $isActive   = isset($c['isActive']) ? (int)!empty($c['isActive']) : (int)($c['categories_status'] ?? 1);
-        $sortOrder  = $c['sortOrder'] ?? $c['sort_order'] ?? 0;
-        $image      = $c['image'] ?? $c['categories_image'] ?? '';
-        $dateAdded  = $c['dateAdded'] ?? $c['date_added'] ?? '';
-        $lastMod    = $c['lastModified'] ?? $c['last_modified'] ?? '';
-
-        // Sprachfelder (können als Map vorliegen)
-        $name           = $c['name'] ?? null;                  // map|string
-        $headingTitle   = $c['headingTitle'] ?? null;          // map|string
-        $description    = $c['description'] ?? null;           // map|string
-        $metaTitle      = $c['metaTitle'] ?? null;             // map|string
-        $metaDesc       = $c['metaDescription'] ?? null;       // map|string
-        $metaKeywords   = $c['metaKeywords'] ?? null;          // map|string
-        $url            = $c['url'] ?? null;                   // map|string
-        $urlKeywords    = $c['urlKeywords'] ?? null;           // map|string
-
-        $norm[] = [
-            'categories_id'     => $id,
-            'parent_id'         => $parentId,
-            'categories_status' => $isActive,
-            'sort_order'        => $sortOrder,
-            'categories_image'  => $image,
-            'date_added'        => $dateAdded,
-            'last_modified'     => $lastMod,
-            // sprachlich
-            'name'              => $name,
-            'heading_title'     => $headingTitle,
-            'description'       => $description,
-            'meta_title'        => $metaTitle,
-            'meta_description'  => $metaDesc,
-            'meta_keywords'     => $metaKeywords,
-            'url'               => $url,
-            'url_keywords'      => $urlKeywords,
-        ];
+        $norm[] = $this->normalizeCategoryV2($c);
     }
 
     return ['data' => $norm];
 		}
+
+private function fetchCategoriesPageV3(int $page = 1, int $perPage = 200): array
+{
+    if ($perPage > 200) { $perPage = 200; }
+    if ($perPage < 1)   { $perPage = 50; }
+
+    $res = $this->api->get('categories', [
+        'page'     => $page,
+        'per-page' => $perPage,
+        'limit'    => $perPage,
+        'offset'   => ($page - 1) * $perPage,
+        'sort'     => 'id',
+    ]);
+
+    $list = [];
+    if (is_array($res)) {
+        if (isset($res['data']) && is_array($res['data'])) {
+            $list = $res['data'];
+        } elseif (array_values($res) === $res) {
+            $list = $res;
+        }
+    }
+
+    $norm = [];
+    foreach ($list as $c) {
+        if (!is_array($c)) continue;
+        $norm[] = $this->normalizeCategoryV2($c);
+    }
+
+    return ['data' => $norm];
+}
 
 		/**
 		 * Generator über ALLE Kategorien (seitenweise)
@@ -738,7 +798,26 @@ public function fetchCategoriesPageV2(int $page = 1, int $perPage = 200): array
      * Weitere Funktionen (Minimal)
      * ======================= */
 
-    public function getManufacturersV2(int $page = 1, int $perPage = 200): array
+    public function getManufacturers(int $page = 1, int $perPage = 200): array
+    {
+        if ($this->api->getApiVersion() === 'v3') {
+            try {
+                return $this->getManufacturersV3($page, $perPage);
+            } catch (\Throwable $e) {
+                if (strpos($e->getMessage(), 'HTTP 404') !== false) {
+                    if (function_exists('cao_api_log')) {
+                        cao_api_log('v3 manufacturers endpoint missing, falling back to v2', $GLOBALS['config']['logFile'] ?? null);
+                    }
+                    return $this->getManufacturersV2($page, $perPage);
+                }
+                throw $e;
+            }
+        }
+
+        return $this->getManufacturersV2($page, $perPage);
+    }
+
+    private function getManufacturersV2(int $page = 1, int $perPage = 200): array
     {
         $res = $this->api->get('manufacturers', [
             'page'     => $page,
@@ -748,6 +827,23 @@ public function fetchCategoriesPageV2(int $page = 1, int $perPage = 200): array
         ]);
 
         cao_api_log('Manufacturers API response: ' . json_encode($res), $GLOBALS['config']['logFile'] ?? null);
+
+        if (!is_array($res)) {
+            $res = is_object($res) ? json_decode(json_encode($res), true) : [];
+        }
+
+        return ['data' => $this->extractList($res, ['data','manufacturers'])];
+    }
+
+    private function getManufacturersV3(int $page = 1, int $perPage = 200): array
+    {
+        $res = $this->api->get('manufacturers', [
+            'page'     => $page,
+            'per-page' => $perPage,
+            'limit'    => $perPage,
+            'offset'   => ($page - 1) * $perPage,
+            'sort'     => 'id',
+        ]);
 
         if (!is_array($res)) {
             $res = is_object($res) ? json_decode(json_encode($res), true) : [];
