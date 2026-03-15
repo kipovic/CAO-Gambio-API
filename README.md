@@ -1,82 +1,97 @@
 # CAO-Gambio-API
 
-## Überblick
-Dieses Script stellt eine CAO-kompatible Schnittstelle bereit, die Bestellungen aus Gambio abholen und (optional) Produkt-, Preis- und Bestandsupdates an Gambio senden kann. Die API läuft als Entry-Point (`admin/cao-faktura.php`) innerhalb des Shops und spricht je nach Konfiguration die Gambio-REST-API v2 oder v3 an. 
+Bridge-Skript zwischen **CAO-Faktura** und der **Gambio REST API**.
 
-## Benötigte Informationen (Konfiguration)
-Die Konfiguration liegt in `kip/CaoApi/config/config.php` (siehe `config.sample.php` als Vorlage). Für die Nutzung werden folgende Angaben benötigt:
+Wichtig: Dieses Repo ist **bewusst kein klassisches Gambio-Modul**, sondern ein pragmatischer Entry-Point für CAO-kompatible XML-Antworten und ergänzende Schreiboperationen gegen die Gambio-API.
 
-* **baseUrl** – Shop-URL ohne `/api.php`, z. B. `https://shop.tld`.  
-* **apiVersion** – `v2` oder `v3` (kann pro Request überschrieben werden).  
-* **basicUser/basicPass** – HTTP Basic Auth für die Gambio-API (v2/v3).  
-* **jwt** – optional für v3, wenn Bearer-Token genutzt wird.  
-* **accessToken** – optionaler Token für den CAO-Entry-Point (Header `X-CAO-Token` oder `X-Api-Key`, alternativ `token`-Query).  
-* **allowedIps** – optionale IP-Whitelist für den Zugriff auf den Entry-Point.  
-* **logFile** – Pfad der Log-Datei.  
-* **maxXmlBytes** – Maximale Größe für XML-Uploads (Default 2 MiB).  
+## Ziel
 
-## Sichere Einrichtung & Nutzung
-Empfohlene Maßnahmen, um den Zugriff abzusichern:
+Die Bridge soll:
+- CAO-kompatible GET-Actions bereitstellen
+- Gambio REST API v2 und v3 nutzen
+- optional Schreiboperationen wie Produkt-/Preis-/Bestandsupdates ausführen
+- sicher und wartbar bleiben, ohne unnötig viel Gambio-Modul-Overhead
 
-1. **HTTPS nutzen**: Schützt Tokens und Zugangsdaten auf dem Transportweg.  
-2. **IP-Whitelist setzen**: Beschränke `allowedIps` auf deine CAO-Server.  
-3. **Access-Token aktivieren**: `accessToken` setzen und im Client per Header senden.  
-4. **Separate API-Credentials**: Verwende einen eigenen Gambio-API-User mit minimalen Rechten (nur lesen/schreiben, was benötigt wird).  
-5. **Logs überwachen**: Aktiviere `logFile` und überwache Fehlermeldungen.  
+## Repo-Struktur
 
-## Nutzung / Aufrufe
-Der Entry-Point unterstützt zwei Arten von Aufrufen:
-
-### 1) GET-Action (CAO-kompatibel)
-Beispiele:
-
-* `?action=version`
-* `?action=orders_export&order_from=1&order_to=999999`
-* `?action=products_export`
-* `?action=customers_export`
-
-### 2) POST/GET-Op (eigene Ops)
-Beispiele:
-
-* `?op=get_orders_since&since=2024-01-01T00:00:00`
-* `?op=set_order_status&order_id=123&status_id=5&notify=1`
-* `?op=add_tracking&order_id=123&code=XYZ&carrier=DHL`
-* `?op=upsert_product` (Produkt-XML im Body)
-* `?op=set_stock&sku=ART-123&qty=10`
-* `?op=set_price&sku=ART-123&price=19.95`
-
-### Produkt-XML (für `upsert_product`)
-Der XML-Body entspricht der klassischen CAO-Struktur mit `PRODUCT_DATA` und optional `PRODUCT_DESCRIPTION`. Mindestens sollte **PRODUCT_MODEL** oder **PRODUCT_ID** vorhanden sein. Beispiel (gekürzt):
-
-```xml
-<PRODUCT_INFO>
-  <PRODUCT_DATA>
-    <PRODUCT_ID>123</PRODUCT_ID>
-    <PRODUCT_MODEL>ART-123</PRODUCT_MODEL>
-    <PRODUCT_QUANTITY>10</PRODUCT_QUANTITY>
-    <PRODUCT_PRICE>19.95</PRODUCT_PRICE>
-    <PRODUCT_TAX_CLASS_ID>1</PRODUCT_TAX_CLASS_ID>
-    <PRODUCT_STATUS>1</PRODUCT_STATUS>
-    <PRODUCT_DESCRIPTION CODE="de">
-      <NAME>Beispielprodukt</NAME>
-      <DESCRIPTION>...</DESCRIPTION>
-    </PRODUCT_DESCRIPTION>
-  </PRODUCT_DATA>
-</PRODUCT_INFO>
+```text
+cao-faktura.php          Entry-Point, der später im Shop unter /admin liegt
+kip/CaoApi/              Bridge-Code, Bootstrap, Config, Services, Mapper
+docs/                    Deployment- und Betriebsdoku
+scripts/                 Hilfsskripte, nicht produktiv nötig
+reference/               historische/experimentelle Dateien
 ```
 
-## Umgesetzte Funktionen (Stand aktuell)
+## Wichtige Klarstellung zur Deployment-Struktur
 
-### Lesefunktionen
-* `orders_export` (inkl. Statusfilter und Detailanreicherung)  
-* `get_orders_since`  
-* `products_export`  
-* `manufacturers_export`  
-* `customers_export`  
+Im Repository liegt der Code als Quellstruktur vor.
+Im Shop ist die **Zielstruktur** typischerweise:
 
-### Schreibfunktionen
-* `upsert_product` – erstellt oder aktualisiert Produkte anhand von `PRODUCT_ID`/`PRODUCT_MODEL`.  
-* `set_stock` – setzt den Lagerbestand anhand der SKU (`PRODUCT_MODEL`).  
-* `set_price` – setzt den Preis anhand der SKU (`PRODUCT_MODEL`).  
+```text
+/admin/cao-faktura.php
+/GXModules/kip/CaoApi/bootstrap.php
+/GXModules/kip/CaoApi/config/config.php
+/GXModules/kip/CaoApi/src/...
+```
 
-> Hinweis: Die Schreibfunktionen nutzen die Gambio-REST-API. Stelle sicher, dass der API-User die entsprechenden Rechte besitzt.
+Darum referenziert `cao-faktura.php` im Runtime-Betrieb relativ auf:
+
+```php
+../GXModules/kip/CaoApi/bootstrap.php
+```
+
+Das ist **absichtlich** so, weil die Datei später unter `/admin/` liegt.
+
+## Konfiguration
+
+Als Vorlage dient:
+- `kip/CaoApi/config/config.sample.php`
+
+Wichtige Werte:
+- `baseUrl`
+- `apiVersion` (`v2` oder `v3`)
+- `basicUser` / `basicPass`
+- optional `jwt`
+- optional `accessToken`
+- optional `allowedIps`
+- `logFile`
+- `maxXmlBytes`
+
+## Unterstützte Aufrufe
+
+### CAO-kompatible GET-Actions
+- `version`
+- `orders_export`
+- `products_export`
+- `customers_export`
+- `manufacturers_export`
+- `categories_export`
+
+### Eigene Ops
+- `get_orders_since`
+- `set_order_status`
+- `add_tracking`
+- `upsert_product`
+- `set_stock`
+- `set_price`
+
+## Sicherheit
+
+Empfohlen:
+- HTTPS erzwingen
+- eigenen Gambio-API-User nutzen
+- `accessToken` setzen
+- `allowedIps` pflegen
+- Logs überwachen
+
+## Doku
+
+- `docs/DEPLOYMENT.md`
+
+## Aktueller Entwicklungsgrundsatz
+
+Nicht auf "perfektes Gambio-Modul" trimmen, sondern auf:
+- stabile Bridge-Struktur
+- saubere Deployment-Realität
+- robuste Nutzung der Gambio REST API
+- möglichst wenig Überraschungen für CAO
