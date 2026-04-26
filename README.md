@@ -84,6 +84,21 @@ Empfohlen:
 - `allowedIps` pflegen
 - Logs überwachen
 
+## Tests / Checks
+
+### Lokale Baseline
+```bash
+./scripts/validate.sh
+```
+
+Der Validator bündelt PHP-Syntaxprüfung und einen Offline-Smoke-Test für Status-/XML-Mapper.
+Wenn die lokale PHP-CLI kein `ext-simplexml` hat, laufen die Status-Checks weiter und die XML-Mapper-Prüfungen werden klar als übersprungen gemeldet.
+
+### Einzelcheck
+```bash
+php tests/xml_mapper_smoke.php
+```
+
 ## Doku
 
 - `docs/DEPLOYMENT.md`
